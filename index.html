@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Emerald City Hub</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        body { background-color: #0b162a; color: white; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+        /* Team Accents */
+        .mariners { border-color: #005C5C; } 
+        .seahawks { border-color: #69BE28; }
+        .mancity { border-color: #6CABDD; } 
+        .huskies { border-color: #4B2E83; }
+        .sounders { border-color: #5D9741; }
+        .kraken { border-color: #99D9D9; } /* Ice Blue */
+
+        .team-card { background: rgba(255,255,255,0.05); border-left: 4px solid; transition: transform 0.1s; }
+        .team-card:active { transform: scale(0.98); }
+        .win { color: #4ade80; } .loss { color: #f87171; } .draw { color: #94a3b8; }
+        .nav-active { border-bottom: 2px solid #69BE28; color: #69BE28; text-shadow: 0 0 10px rgba(105,190,40,0.3); }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: #0b162a; }
+        ::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        
+        // --- CONFIGURATION ---
+        const YT_API_KEY = 'YOUR_YOUTUBE_API_KEY'; // <--- PASTE YOUR KEY HERE
+        
+        const TEAMS = [
+            { id: "135278", name: "Mariners", class: "mariners", ytCid: "UCoLrcjPV5PbUrUyXq5mjc_A", q: "Mariners highlights" },
+            { id: "134940", name: "Seahawks", class: "seahawks", ytCid: "UCDVYQ4Zhbm3S2dlz7P1GBDg", q: "Seahawks highlights" },
+            { id: "136420", name: "Kraken", class: "kraken", ytCid: "UCqG4oUu9C5F_hICWjO5Tqsw", q: "Seattle Kraken highlights" },
+            { id: "134151", name: "Sounders", class: "sounders", ytCid: "UCp_v6u6kL8fWAsq073_xG_A", q: "Sounders highlights" },
+            { id: "135912", name: "Huskies FB", class: "huskies", ytCid: "UCWWLs-O8JGYYcNea7AgumAA", q: "Washington Huskies football highlights" },
+            { id: "133613", name: "Man City", class: "mancity", ytCid: "UCkzCjdRMrWBaKuLQ7_UuS0A", q: "Man City highlights" },
+        ];
+
+        function App() {
+            const [view, setView] = useState('scores'); 
+            const [expandedTeam, setExpandedTeam] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [lastUpdated, setLastUpdated] = useState(null);
+            
+            // Initial State from Local Storage if available
+            const [data, setData] = useState(() => {
+                const saved = localStorage.getItem('emerald_hub_data');
+                return saved ? JSON.parse(saved) : { scores: {}, history: {}, live: [], videos: [] };
+            });
+
+            useEffect(() => { 
+                // Auto-sync on load
+                loadAllData(); 
+            }, []);
+
+            const loadAllData = async () => {
+                setLoading(true);
+                const scores = { ...data.scores };
+                const history = { ...data.history };
+                let liveMatches = [];
+                let videos = [];
+
+                try {
+                    // 1. Fetch Sports Data
+                    for (let t of TEAMS) {
+                        // Next Event
+                        try {
+                            const nextRes = await fetch(`https://www.thesportsdb.com/api/v1/json/3/eventsnext.php?id=${t.id}`);
+                            const nextJson = await nextRes.json();
+                            scores[t.id] = nextJson.events ? nextJson.events[0] : { strEvent: "Off Season" };
+                        } catch (e) { console.log(`Skipping next for ${t.name}`); }
+
+                        // History
+                        try {
+                            const lastRes = await fetch(`https://www.thesportsdb.com/api/v1/json/3/eventslast.php?id=${t.id}`);
+                            const lastJson = await lastRes.json();
+                            history[t.id] = lastJson.results || [];
+                        } catch (e) { console.log(`Skipping history for ${t.name}`); }
+                    }
+
+                    // 2. Fetch Live
+                    try {
+                        const liveRes = await fetch(`https://www.thesportsdb.com/api/v2/json/3/livescore.php`);
+                        const liveJson = await liveRes.json();
+                        if (liveJson.events) {
+                            liveMatches = liveJson.events.filter(e => TEAMS.some(t => t.id === e.idHomeTeam || t.id === e.idAwayTeam));
+                        }
+                    } catch(e) {}
+
+                    // 3. YouTube (Only fetch if Key is present to save errors)
+                    if (YT_API_KEY !== 'YOUR_YOUTUBE_API_KEY') {
+                        // Limit to first 3 teams to save API quota
+                        for (let t of TEAMS.slice(0,3)) {
+                            const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${t.ytCid}&q=${encodeURIComponent(t.q)}&type=video&videoDuration=medium&maxResults=1&order=date&key=${YT_API_KEY}`;
+                            const r = await fetch(url); 
+                            const j = await r.json();
+                            if(j.items) videos.push(...j.items.map(v => ({ title: v.snippet.title, link: `https://youtube.com/watch?v=${v.id.videoId}`, team: t.name, date: v.snippet.publishedAt })));
+                        }
+                    }
+
+                    const newData = { scores, history, live: liveMatches, videos: videos.length ? videos : data.videos };
+                    
+                    setData(newData);
+                    setLastUpdated(new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
+                    localStorage.setItem('emerald_hub_data', JSON.stringify(newData));
+                    
+                } catch (error) {
+                    console.error("Sync failed", error);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const getResultColor = (teamId, match) => {
+                const homeScore = parseInt(match.intHomeScore);
+                const awayScore = parseInt(match.intAwayScore);
+                if (match.idHomeTeam === teamId) {
+                    return homeScore > awayScore ? 'win' : homeScore < awayScore ? 'loss' : 'draw';
+                } else {
+                    return awayScore > homeScore ? 'win' : awayScore < homeScore ? 'loss' : 'draw';
+                }
+            };
+
+            return (
+                <div className="max-w-md mx-auto min-h-screen flex flex-col p-4 pb-20 relative">
+                    <header className="flex justify-between items-center mb-6 pt-2">
+                        <div>
+                            <h1 className="text-2xl font-black italic text-transparent bg-clip-text bg-gradient-to-r from-teal-400 to-green-500 tracking-tighter">EMERALD HUB</h1>
+                            {lastUpdated && <p className="text-[10px] text-gray-500 font-mono">UPDATED: {lastUpdated}</p>}
+                        </div>
+                        <button onClick={loadAllData} disabled={loading} className={`text-[10px] font-bold bg-white/10 px-3 py-2 rounded uppercase hover:bg-white/20 transition-all ${loading ? 'animate-pulse text-yellow-300' : ''}`}>
+                            {loading ? 'SYNCING...' : 'SYNC'}
+                        </button>
+                    </header>
+
+                    {/* LIVE ALERTS */}
+                    {data.live.map((m, i) => (
+                        <div key={i} className="bg-gradient-to-r from-red-900/60 to-red-800/40 border-l-4 border-red-500 rounded-r-lg p-3 mb-4 flex justify-between items-center animate-pulse shadow-lg shadow-red-900/20">
+                            <span className="text-xs font-bold text-red-400 uppercase tracking-wider flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span> LIVE
+                            </span>
+                            <span className="text-sm font-black text-white">{m.strHomeTeam} {m.intHomeScore}-{m.intAwayScore} {m.strAwayTeam}</span>
+                        </div>
+                    ))}
+
+                    <nav className="flex mb-6 border-b border-white/10 sticky top-0 bg-[#0b162a] z-10 pt-2">
+                        {['scores', 'videos'].map(v => (
+                            <button key={v} onClick={() => setView(v)} className={`flex-1 pb-3 text-xs font-bold uppercase tracking-widest transition-colors ${view===v?'nav-active':'text-gray-500 hover:text-gray-300'}`}>{v}</button>
+                        ))}
+                    </nav>
+
+                    <main className="flex-1">
+                        {view === 'scores' ? TEAMS.map(t => (
+                            <div key={t.id} className={`team-card mb-3 rounded-r-lg ${t.class} ${expandedTeam === t.id ? 'bg-white/10' : ''}`}>
+                                <div className="p-4 cursor-pointer" onClick={() => setExpandedTeam(expandedTeam === t.id ? null : t.id)}>
+                                    <div className="flex justify-between items-center">
+                                        <div>
+                                            <h2 className="font-bold text-lg leading-none">{t.name}</h2>
+                                            <p className="text-[10px] text-gray-400 uppercase mt-1.5 font-medium tracking-wide">
+                                                {data.scores[t.id]?.strEvent || "Loading..."}
+                                            </p>
+                                        </div>
+                                        <div className="flex flex-col items-end gap-1">
+                                            {expandedTeam !== t.id && (
+                                                <div className="flex gap-1">
+                                                     {/* Mini Form Indicators */}
+                                                    {data.history[t.id]?.slice(0,3).map((h, i) => (
+                                                        <div key={i} className={`w-2 h-2 rounded-full ${getResultColor(t.id, h) === 'win' ? 'bg-green-400' : getResultColor(t.id, h) === 'loss' ? 'bg-red-400' : 'bg-gray-400'}`}></div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {expandedTeam === t.id && (
+                                    <div className="bg-black/30 p-3 border-t border-white/5 animate-fadeIn">
+                                        <h3 className="text-[10px] font-bold text-gray-500 uppercase mb-3">Recent Form</h3>
+                                        {data.history[t.id]?.length > 0 ? (
+                                            <div className="space-y-2">
+                                                {data.history[t.id].map((h, i) => (
+                                                    <div key={i} className="flex justify-between items-center text-xs border-b border-white/5 pb-2 last:border-0 last:pb-0">
+                                                        <span className="opacity-80 w-1/3 truncate text-left">{h.strHomeTeam}</span>
+                                                        <span className={`font-mono font-bold px-2 py-0.5 rounded bg-black/40 ${getResultColor(t.id, h)}`}>
+                                                            {h.intHomeScore} - {h.intAwayScore}
+                                                        </span>
+                                                        <span className="opacity-80 w-1/3 truncate text-right">{h.strAwayTeam}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : <p className="text-xs italic opacity-40">No recent history available.</p>}
+                                    </div>
+                                )}
+                            </div>
+                        )) : (
+                            <div className="space-y-4">
+                                {data.videos.length === 0 && <div className="text-center opacity-50 text-xs mt-10">No videos loaded. Check API Key.</div>}
+                                {data.videos.map((v, i) => (
+                                    <a href={v.link} target="_blank" key={i} className="block group relative overflow-hidden rounded-lg bg-white/5 border border-white/5 hover:border-teal-500/50 transition-all">
+                                        <div className="p-4">
+                                            <span className="inline-block px-2 py-1 rounded bg-teal-500/20 text-teal-300 text-[9px] font-bold uppercase tracking-wider mb-2">{v.team}</span>
+                                            <h3 className="text-sm font-bold leading-snug group-hover:text-teal-400 transition-colors">{v.title}</h3>
+                                            <p className="text-[10px] text-gray-500 mt-2">{new Date(v.date).toLocaleDateString()}</p>
+                                        </div>
+                                    </a>
+                                ))}
+                            </div>
+                        )}
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
