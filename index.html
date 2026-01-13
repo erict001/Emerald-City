@@ -48,6 +48,24 @@
         // Strict Filter Keywords for ESPN
         const LEAGUE_KEYWORDS = ["roundup", "wrap", "scores", "standings", "playoff", "power rankings", "week", "predictions"];
 
+        // Extra Video Sources (Podcasts/Shows)
+        const EXTRA_VIDEO_SOURCES = [
+            {
+                name: "HawkBlogger",
+                method: "playlist",
+                value: "UUAkM3Arfo7PUf1gl7ohDyLw", // HawkBlogger Uploads
+                class: "seahawks",
+                label: "PODCAST"
+            },
+            {
+                name: "Locked On Mariners",
+                method: "search",
+                value: "Locked On Mariners Podcast",
+                class: "mariners",
+                label: "PODCAST"
+            }
+        ];
+
         const TEAMS = [
             { 
                 id: "mancity", name: "Man City", class: "mancity", sport: "soccer", league: "eng.1", teamId: "382",
@@ -95,7 +113,6 @@
             const timeOpt = { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Europe/Amsterdam' };
             const time = date.toLocaleTimeString('en-US', timeOpt);
             
-            // Logic: If user wants date, show "Today, 2pm" or "Jan 15, 2pm"
             if (!includeDate) return time;
             if (isToday) return `Today, ${time}`;
             
@@ -135,7 +152,7 @@
                     }
                 } catch(e) { console.log("Google RSS Error", e); }
 
-                // 2. TEAM SPECIFIC FETCH
+                // 2. TEAM SPECIFIC FETCH (Scores + News + Main Videos)
                 await Promise.all(TEAMS.map(async t => {
                     // A. SCORES (ESPN)
                     try {
@@ -210,29 +227,35 @@
                     } catch(e) {}
                 }));
 
-                // 3. YOUTUBE
+                // 3. YOUTUBE (Teams + Extra Sources)
                 if (YT_API_KEY) {
-                    await Promise.all(TEAMS.map(async t => { 
+                    const allVideoSources = [
+                        ...TEAMS.map(t => ({...t, label: t.name})),
+                        ...EXTRA_VIDEO_SOURCES
+                    ];
+
+                    await Promise.all(allVideoSources.map(async t => { 
                         try {
                             let url = t.method === "playlist" 
-                                ? `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${t.value}&maxResults=5&key=${YT_API_KEY}`
-                                : `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(t.value + " official")}&type=video&order=date&maxResults=5&key=${YT_API_KEY}`;
+                                ? `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${t.value}&maxResults=4&key=${YT_API_KEY}`
+                                : `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(t.value)}&type=video&order=date&maxResults=4&key=${YT_API_KEY}`;
 
                             const r = await fetch(url);
                             const j = await r.json();
                             
                             if (j.items && j.items.length > 0) {
-                                let bestVideo = j.items.find(v => !v.snippet.title.toLowerCase().includes("#shorts"));
-                                if (!bestVideo) bestVideo = j.items[0];
-                                const videoId = t.method === "playlist" ? bestVideo.snippet.resourceId.videoId : bestVideo.id.videoId;
+                                // Filter out shorts if possible
+                                const validItems = j.items.filter(v => !v.snippet.title.toLowerCase().includes("#shorts"));
+                                const videoItem = validItems.length > 0 ? validItems[0] : j.items[0];
+                                const videoId = t.method === "playlist" ? videoItem.snippet.resourceId.videoId : videoItem.id.videoId;
 
                                 collectedVideos.push({ 
-                                    title: bestVideo.snippet.title, 
+                                    title: videoItem.snippet.title, 
                                     id: videoId, 
-                                    pubDate: bestVideo.snippet.publishedAt,
-                                    team: t.name,
+                                    pubDate: videoItem.snippet.publishedAt,
+                                    team: t.label, // "HawkBlogger", "Seahawks", etc.
                                     source: "VIDEO",
-                                    thumbnail: bestVideo.snippet.thumbnails.medium.url,
+                                    thumbnail: videoItem.snippet.thumbnails.medium.url,
                                     type: 'video',
                                     teamClass: t.class
                                 });
@@ -285,7 +308,6 @@
                                                         <span className="text-[9px] opacity-40 mb-0.5 ml-auto">{s.opponent}</span>
                                                     </div>
                                                 ) : (
-                                                    // UPCOMING GAME DISPLAY (Now with Date)
                                                     <div className="flex flex-col">
                                                         <span className="text-[10px] font-bold leading-tight truncate">{formatTime(s.date, true)}</span>
                                                         <span className="text-[9px] opacity-50 mt-0.5 truncate">vs {s.opponent}</span>
@@ -316,7 +338,7 @@
                                                     <i className="fas fa-play text-white pl-1 text-sm"></i>
                                                 </div>
                                             </div>
-                                            <span className="absolute top-2 left-2 bg-red-600 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase text-white shadow">{item.team} VIDEO</span>
+                                            <span className="absolute top-2 left-2 bg-red-600 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase text-white shadow">{item.team}</span>
                                         </div>
                                         <div className="p-3">
                                             <h3 className="font-bold text-sm leading-snug line-clamp-2">{item.title}</h3>
