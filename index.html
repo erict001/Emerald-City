@@ -43,42 +43,47 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        // --- API KEY ---
         const YT_API_KEY = 'AIzaSyAo9TyNLEK7cR9GGGwirMlwAqmQ0bVT360'; 
-
+        
+        // Strict Filter Keywords for ESPN
         const LEAGUE_KEYWORDS = ["roundup", "wrap", "scores", "standings", "playoff", "power rankings", "week", "predictions"];
 
-        // CONFIG: Using Hybrid Method (Playlist vs Search) to fix 404s
         const TEAMS = [
             { 
+                id: "mancity", name: "Man City", class: "mancity", sport: "soccer", league: "eng.1", teamId: "382",
+                keywords: ["man city", "transfer", "guardiola", "haaland"],
+                method: "playlist", value: "UUkzCjdRMrW2vXLx8mvPVLdQ",
+                customFeed: "https://www.manchestereveningnews.co.uk/sport/football/transfer-news/?service=rss"
+            },
+            { 
                 id: "mariners", name: "Mariners", class: "mariners", sport: "baseball", league: "mlb", teamId: "11",
-                keywords: ["mariners", "seattle"],
-                method: "playlist", value: "UUWWLs-O8JGYYcNea7AgumAA" 
+                keywords: ["mariners", "trade", "dipoto", "prospect"],
+                method: "playlist", value: "UUWWLs-O8JGYYcNea7AgumAA",
+                customFeed: "https://www.lookoutlanding.com/rss/current.xml"
             },
             { 
                 id: "seahawks", name: "Seahawks", class: "seahawks", sport: "football", league: "nfl", teamId: "26",
-                keywords: ["seahawks", "seattle"],
-                method: "playlist", value: "UUzkFCRiMcOBeef8xcaqipmw" 
+                keywords: ["seahawks", "draft", "trade", "rumor"],
+                method: "playlist", value: "UUzkFCRiMcOBeef8xcaqipmw",
+                customFeed: "https://www.fieldgulls.com/rss/current.xml"
             },
             { 
                 id: "kraken", name: "Kraken", class: "kraken", sport: "hockey", league: "nhl", teamId: "55",
                 keywords: ["kraken"],
-                method: "search", value: "Seattle Kraken" // Playlist 404s -> Use Search
+                method: "search", value: "Seattle Kraken",
+                customFeed: "https://www.davyjoneslockerroom.com/rss/current.xml"
             },
             { 
                 id: "sounders", name: "Sounders", class: "sounders", sport: "soccer", league: "usa.1", teamId: "2526",
                 keywords: ["sounders"],
-                method: "search", value: "Seattle Sounders FC" // Playlist 404s -> Use Search
+                method: "search", value: "Seattle Sounders FC",
+                customFeed: "https://www.sounderatheart.com/feed"
             },
             { 
                 id: "huskies", name: "Huskies", class: "huskies", sport: "football", league: "college-football", teamId: "264",
-                keywords: ["huskies", "washington", "uw"],
-                method: "playlist", value: "UUyTiy1J0SA5gnOLC0or_OIQ" 
-            },
-            { 
-                id: "mancity", name: "Man City", class: "mancity", sport: "soccer", league: "eng.1", teamId: "382",
-                keywords: ["man city", "manchester city", "city", "guardiola", "haaland"],
-                method: "playlist", value: "UUkzCjdRMrW2vXLx8mvPVLdQ" 
+                keywords: ["huskies", "recruiting", "portal"],
+                method: "playlist", value: "UUyTiy1J0SA5gnOLC0or_OIQ",
+                customFeed: "https://www.uwdawgpound.com/rss/current.xml"
             }
         ];
 
@@ -89,10 +94,13 @@
             const isToday = date.toDateString() === today.toDateString();
             const timeOpt = { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Europe/Amsterdam' };
             const time = date.toLocaleTimeString('en-US', timeOpt);
+            
+            // Logic: If user wants date, show "Today, 2pm" or "Jan 15, 2pm"
             if (!includeDate) return time;
             if (isToday) return `Today, ${time}`;
+            
             const dateOpt = { day: 'numeric', month: 'short', timeZone: 'Europe/Amsterdam' };
-            return `${date.toLocaleDateString('en-US', dateOpt)} ${time}`;
+            return `${date.toLocaleDateString('en-US', dateOpt)}, ${time}`;
         };
 
         function App() {
@@ -108,61 +116,74 @@
                 let collectedNews = [];
                 let collectedVideos = [];
 
-                // 1. FETCH GOOGLE NEWS (Restored)
+                // 1. GOOGLE NEWS
                 try {
-                    const teamQuery = "Seattle Mariners OR Seahawks OR Kraken OR Sounders OR \"Manchester City\" OR \"Man City\" OR \"Washington Huskies\"";
+                    const teamQuery = "Seattle Mariners OR Seahawks OR \"Manchester City\" Transfer OR Trade OR Rumors";
                     const googleUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(teamQuery)}&hl=en-US&gl=US&ceid=US:en`;
                     const r = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(googleUrl)}`);
                     const j = await r.json();
                     if (j.status === 'ok' && j.items) {
-                        const googleItems = j.items.slice(0, 8).map(i => ({
+                        collectedNews.push(...j.items.slice(0, 5).map(i => ({
                             title: i.title,
                             link: i.link,
                             pubDate: i.pubDate,
-                            author: i.author || "Local News",
-                            source: "LOCAL",
+                            author: "News Wire",
+                            source: "NEWS",
                             type: 'news',
                             teamClass: 'border-gray-500'
-                        }));
-                        collectedNews.push(...googleItems);
+                        })));
                     }
                 } catch(e) { console.log("Google RSS Error", e); }
 
-                // 2. FETCH ESPN DATA
+                // 2. TEAM SPECIFIC FETCH
                 await Promise.all(TEAMS.map(async t => {
-                    // SCORES
+                    // A. SCORES (ESPN)
                     try {
                         const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${t.sport}/${t.league}/teams/${t.teamId}`);
                         const j = await r.json();
                         const nextEvent = j.team.nextEvent ? j.team.nextEvent[0] : null;
 
                         if (nextEvent) {
-                            const competition = nextEvent.competitions[0];
-                            const status = competition.status.type.shortDetail; 
-                            const isLive = competition.status.type.state === "in";
-                            const isFinal = competition.status.type.state === "post";
-                            
-                            const myTeamData = competition.competitors.find(c => c.team.id === j.team.id);
-                            const oppTeamData = competition.competitors.find(c => c.team.id !== j.team.id);
+                            const c = nextEvent.competitions[0];
+                            const isLive = c.status.type.state === "in";
+                            const isFinal = c.status.type.state === "post";
+                            const opp = c.competitors.find(x => x.team.id !== j.team.id);
+                            const my = c.competitors.find(x => x.team.id === j.team.id);
                             
                             scores[t.id] = {
                                 active: true,
-                                status: status,
-                                isLive: isLive,
-                                isFinal: isFinal,
-                                opponent: oppTeamData.team.abbreviation || oppTeamData.team.shortDisplayName,
-                                myScore: myTeamData.score?.displayValue,
-                                oppScore: oppTeamData.score?.displayValue,
-                                date: competition.date 
+                                status: c.status.type.shortDetail,
+                                isLive, isFinal,
+                                opponent: opp.team.abbreviation,
+                                myScore: my.score?.displayValue,
+                                oppScore: opp.score?.displayValue,
+                                date: c.date 
                             };
-                        } else {
-                            scores[t.id] = { active: false, status: "Standby" };
-                        }
-                    } catch(e) {
-                        scores[t.id] = { active: false, status: "..." };
+                        } else { scores[t.id] = { active: false, status: "Standby" }; }
+                    } catch(e) { scores[t.id] = { active: false }; }
+
+                    // B. NICHE / RUMOR BLOGS
+                    if (t.customFeed) {
+                        try {
+                            const rssUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(t.customFeed)}`;
+                            const r = await fetch(rssUrl);
+                            const j = await r.json();
+                            if (j.status === 'ok' && j.items) {
+                                collectedNews.push(...j.items.slice(0, 2).map(i => ({
+                                    title: i.title,
+                                    link: i.link,
+                                    pubDate: i.pubDate,
+                                    author: t.name,
+                                    source: "INSIDER", 
+                                    thumbnail: i.thumbnail,
+                                    type: 'news',
+                                    teamClass: t.class
+                                })));
+                            }
+                        } catch (e) { console.log("Blog Error", t.name); }
                     }
 
-                    // ESPN NEWS
+                    // C. ESPN NEWS
                     try {
                         const newsR = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${t.sport}/${t.league}/news?limit=5&team=${t.teamId}`);
                         const newsJ = await newsR.json();
@@ -175,46 +196,34 @@
                                 return matchesTeam || matchesLeague;
                             });
 
-                            const teamNews = filteredArticles.slice(0, 3).map(article => ({
-                                title: article.headline,
-                                link: article.links?.web?.href,
-                                pubDate: article.published,
-                                author: t.name,
+                            collectedNews.push(...filteredArticles.slice(0, 2).map(a => ({
+                                title: a.headline,
+                                link: a.links?.web?.href,
+                                pubDate: a.published,
+                                author: "ESPN",
                                 source: "ESPN",
-                                thumbnail: article.images && article.images.length > 0 ? article.images[0].url : null,
+                                thumbnail: a.images?.[0]?.url,
                                 type: 'news',
                                 teamClass: t.class
-                            }));
-                            collectedNews.push(...teamNews);
+                            })));
                         }
                     } catch(e) {}
                 }));
 
-                // 3. FETCH VIDEOS (Hybrid Method: Playlist or Search)
+                // 3. YOUTUBE
                 if (YT_API_KEY) {
                     await Promise.all(TEAMS.map(async t => { 
                         try {
-                            let url = "";
-                            // Switch method based on team config
-                            if (t.method === "playlist") {
-                                url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${t.value}&maxResults=10&key=${YT_API_KEY}`;
-                            } else {
-                                url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(t.value + " official")}&type=video&order=date&maxResults=5&key=${YT_API_KEY}`;
-                            }
+                            let url = t.method === "playlist" 
+                                ? `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${t.value}&maxResults=5&key=${YT_API_KEY}`
+                                : `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(t.value + " official")}&type=video&order=date&maxResults=5&key=${YT_API_KEY}`;
 
                             const r = await fetch(url);
                             const j = await r.json();
                             
                             if (j.items && j.items.length > 0) {
-                                // Smart Filter: Avoid shorts
-                                let bestVideo = j.items.find(v => {
-                                    const title = v.snippet.title.toLowerCase();
-                                    return !title.includes("#shorts") && !title.includes("shorts");
-                                });
-
+                                let bestVideo = j.items.find(v => !v.snippet.title.toLowerCase().includes("#shorts"));
                                 if (!bestVideo) bestVideo = j.items[0];
-
-                                // ID logic differs between Search and Playlist API
                                 const videoId = t.method === "playlist" ? bestVideo.snippet.resourceId.videoId : bestVideo.id.videoId;
 
                                 collectedVideos.push({ 
@@ -228,27 +237,23 @@
                                     teamClass: t.class
                                 });
                             }
-                        } catch(e) { console.error("YT Error", t.name); }
+                        } catch(e) {}
                     }));
                 }
 
                 setData({ scores, news: collectedNews, videos: collectedVideos, loading: false });
             };
 
-            // ORIGINAL FILTERING LOGIC
             const feed = useMemo(() => {
                 let combined = [];
                 if (filter === 'all' || filter === 'news') combined.push(...data.news);
                 if (filter === 'all' || filter === 'videos') combined.push(...data.videos);
-                
                 const unique = combined.filter((v,i,a)=>a.findIndex(t=>(t.title === v.title))===i);
-                
                 return unique.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
             }, [data, filter]);
 
             return (
                 <div className="flex flex-col h-screen max-w-md mx-auto bg-[#0f172a] relative">
-                    
                     {/* Header */}
                     <div className="px-4 py-3 flex justify-between items-center bg-[#0f172a] z-20">
                         <h1 className="text-xl font-black italic tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-teal-400 to-emerald-500">
@@ -269,10 +274,8 @@
                                         <div className="flex justify-between items-center">
                                             <span className="text-[10px] font-bold uppercase tracking-wide opacity-70">{t.name}</span>
                                             {s && s.isLive && <span className="text-[8px] text-red-400 font-bold flex items-center gap-1"><span className="live-dot"></span> LIVE</span>}
-                                            {s && s.isFinal && <span className="text-[8px] bg-white/10 px-1 rounded text-gray-400">FINAL</span>}
                                         </div>
-                                        
-                                        <div className="mt-1">
+                                        <div className="mt-1 flex-1 flex flex-col justify-center">
                                             {s && s.active ? (
                                                 (s.isLive || s.isFinal) ? (
                                                     <div className="flex items-end gap-2">
@@ -282,18 +285,14 @@
                                                         <span className="text-[9px] opacity-40 mb-0.5 ml-auto">{s.opponent}</span>
                                                     </div>
                                                 ) : (
-                                                    <div className="text-xs font-bold truncate">
-                                                        {formatTime(s.date, false)} <span className="opacity-50 text-[9px]">VS</span> {s.opponent}
+                                                    // UPCOMING GAME DISPLAY (Now with Date)
+                                                    <div className="flex flex-col">
+                                                        <span className="text-[10px] font-bold leading-tight truncate">{formatTime(s.date, true)}</span>
+                                                        <span className="text-[9px] opacity-50 mt-0.5 truncate">vs {s.opponent}</span>
                                                     </div>
                                                 )
-                                            ) : (
-                                                <span className="text-xs font-medium opacity-40">Standby</span>
-                                            )}
+                                            ) : <span className="text-xs font-medium opacity-40">Standby</span>}
                                         </div>
-                                        
-                                        <span className="text-[9px] opacity-50 font-medium truncate">
-                                            {s && s.active ? (s.isLive || s.isFinal ? s.status : formatTime(s.date)) : "-"}
-                                        </span>
                                     </div>
                                 );
                             })}
@@ -303,10 +302,7 @@
                     {/* FEED */}
                     <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-24">
                         {feed.length === 0 && !data.loading && (
-                            <div className="text-center opacity-40 text-sm mt-10">
-                                No content found.<br/>
-                                <span className="text-xs">Try clicking the sync button.</span>
-                            </div>
+                            <div className="text-center opacity-40 text-sm mt-10">No content found.</div>
                         )}
                         
                         {feed.map((item, i) => (
@@ -320,9 +316,7 @@
                                                     <i className="fas fa-play text-white pl-1 text-sm"></i>
                                                 </div>
                                             </div>
-                                            <span className="absolute top-2 left-2 bg-red-600 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase text-white shadow">
-                                                {item.team} VIDEO
-                                            </span>
+                                            <span className="absolute top-2 left-2 bg-red-600 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase text-white shadow">{item.team} VIDEO</span>
                                         </div>
                                         <div className="p-3">
                                             <h3 className="font-bold text-sm leading-snug line-clamp-2">{item.title}</h3>
@@ -341,16 +335,18 @@
                                             <div className="p-3 flex-1">
                                                 <div className="flex justify-between items-start mb-1">
                                                     <div className="flex items-center gap-2">
-                                                        <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${item.source === 'ESPN' ? 'bg-red-500/20 text-red-400' : 'bg-blue-500/20 text-blue-400'}`}>
-                                                            {item.source}
+                                                        <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${
+                                                            item.source === 'INSIDER' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 
+                                                            item.source === 'ESPN' ? 'bg-red-500/20 text-red-400' : 'bg-blue-500/20 text-blue-400'
+                                                        }`}>
+                                                            {item.source === 'INSIDER' ? <><i className="fas fa-user-secret mr-1"></i>INSIDER</> : item.source}
                                                         </span>
-                                                        <span className="text-[9px] font-bold uppercase tracking-wider opacity-60 truncate max-w-[100px]">
-                                                            {item.author}
-                                                        </span>
+                                                        <span className="text-[9px] font-bold uppercase tracking-wider opacity-60 truncate max-w-[100px]">{item.author}</span>
                                                     </div>
                                                     <span className="text-[9px] opacity-30 whitespace-nowrap ml-2">{formatTime(item.pubDate)}</span>
                                                 </div>
                                                 <h3 className="font-bold text-sm leading-snug line-clamp-2 mt-1">{item.title}</h3>
+                                                {item.source === 'INSIDER' && <p className="text-[10px] opacity-50 mt-1 line-clamp-1 italic">Click to read full rumor/analysis...</p>}
                                             </div>
                                         </div>
                                     </a>
@@ -359,18 +355,18 @@
                         ))}
                     </div>
 
-                    {/* Bottom Nav */}
+                    {/* Nav */}
                     <div className="absolute bottom-0 w-full bg-[#0f172a]/95 backdrop-blur-md border-t border-white/10 pb-6 pt-2 px-6 flex justify-between items-center z-30">
                         <button onClick={() => setFilter('all')} className={`nav-item flex flex-col items-center gap-1 p-2 ${filter==='all'?'active':'text-gray-500'}`}>
-                            <i className="fas fa-bolt text-lg transition-transform"></i>
+                            <i className="fas fa-bolt text-lg"></i>
                             <span className="text-[9px] font-bold uppercase">Feed</span>
                         </button>
                         <button onClick={() => setFilter('news')} className={`nav-item flex flex-col items-center gap-1 p-2 ${filter==='news'?'active':'text-gray-500'}`}>
-                            <i className="fas fa-newspaper text-lg transition-transform"></i>
+                            <i className="fas fa-newspaper text-lg"></i>
                             <span className="text-[9px] font-bold uppercase">News</span>
                         </button>
                         <button onClick={() => setFilter('videos')} className={`nav-item flex flex-col items-center gap-1 p-2 ${filter==='videos'?'active':'text-gray-500'}`}>
-                            <i className="fab fa-youtube text-lg transition-transform"></i>
+                            <i className="fab fa-youtube text-lg"></i>
                             <span className="text-[9px] font-bold uppercase">Videos</span>
                         </button>
                     </div>
